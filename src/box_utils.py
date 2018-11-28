@@ -71,7 +71,8 @@ def get_image_boxes(bounding_boxes, img, size=24):
     """Cut out boxes from the image.
     """
     num_boxes = len(bounding_boxes)
-    width, height = img.size
+    width = img.shape[1]
+    height = img.shape[0]
 
     [dy, edy, dx, edx, y, ey, x, ex, w, h] = correct_bboxes(bounding_boxes, width, height)
     img_boxes = np.zeros((num_boxes, 3, size, size), 'float32')

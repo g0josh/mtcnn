@@ -1,16 +1,20 @@
 import math
 import numpy as np
 from PIL import Image
+import cv2
 import torch
 from .model import PNet, RNet, ONet
 from .box_utils import nms, calibrate_box, get_image_boxes, convert_to_square, _preprocess
 
 def detect_faces(image, min_face_size=20.0, thresholds=[0.6, 0.7, 0.8],
                  nms_thresholds=[0.7, 0.7, 0.7]):
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     pnet, rnet, onet= PNet(), RNet(), ONet()
     onet.eval()
 
-    width, height = image.size
+    height = image.shape[0]
+    width = image.shape[1]
+    # width, height = image.size
     min_length = min(height, width)
     min_detection_size = 12
     factor = 0.707  # sqrt(0.5)
@@ -28,7 +32,7 @@ def detect_faces(image, min_face_size=20.0, thresholds=[0.6, 0.7, 0.8],
     # STAGE 1
     bounding_boxes = []
     for s in scales:    # run P-Net on different scales
-        boxes = run_first_stage(image, pnet, scale=s, threshold=thresholds[0])
+        boxes = run_first_stage(image, pnet, scale=s, threshold=thresholds[0], device=device)
         bounding_boxes.append(boxes)
     bounding_boxes = [i for i in bounding_boxes if i is not None]
     bounding_boxes = np.vstack(bounding_boxes)
@@ -59,7 +63,7 @@ def detect_faces(image, min_face_size=20.0, thresholds=[0.6, 0.7, 0.8],
 
     # STAGE 3
     img_boxes = get_image_boxes(bounding_boxes, image, size=48)
-    if len(img_boxes) == 0: 
+    if len(img_boxes) == 0:
         return [], []
     img_boxes = torch.FloatTensor(img_boxes)
     output = onet(img_boxes)
@@ -87,13 +91,16 @@ def detect_faces(image, min_face_size=20.0, thresholds=[0.6, 0.7, 0.8],
 
     return bounding_boxes, landmarks
 
-def run_first_stage(image, net, scale, threshold):
-    """ 
+def run_first_stage(image, net, scale, threshold, device):
+    """
         Run P-Net, generate bounding boxes, and do NMS.
     """
-    width, height = image.size
-    sw, sh = math.ceil(width*scale), math.ceil(height*scale)
-    img = image.resize((int(sw), int(sh)), Image.BILINEAR)
+    # width, height = image.size
+    height = image.shape[0]
+    width = image.shape[1]
+    # sw, sh = math.ceil(width*scale), math.ceil(height*scale)
+    # img = image.resize((int(sw), int(sh)), Image.BILINEAR)
+    img = cv2.resize(image, (int(scale*image.shape[1]), int(scale*image.shape[0])) )
     img = np.asarray(img, 'float32')
     img = torch.FloatTensor(_preprocess(img))
 
