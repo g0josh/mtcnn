@@ -8,8 +8,8 @@ import numpy
 def main():
     #image = Image.open('images/test2.jpg')
     cap = cv2.VideoCapture(0)
-    cap.set(3,1280)
-    cap.set(4,720)
+    # cap.set(3,1280)
+    # cap.set(4,720)
     while cap.isOpened():
         isSuccess, frame = cap.read()
         if isSuccess:
@@ -17,8 +17,9 @@ def main():
             # image = Image.fromarray(frame)
             # print ("type = {}, size-{}".format(type(image), image.size))
             # exit()
-            bounding_boxes, landmarks = detect_faces(frame)
-            print("bbox = {}\n{}\nland={}\n{}".format(type(bounding_boxes), bounding_boxes, type(landmarks), landmarks))
+            image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            bounding_boxes, landmarks = detect_faces(image)
+            # print("bbox = {}\n{}\nland={}\n{}".format(type(bounding_boxes), bounding_boxes, type(landmarks), landmarks))
             image = _show_bboxes(frame, bounding_boxes, landmarks)
             #image.show()
             cv2.imshow('face cap', image)

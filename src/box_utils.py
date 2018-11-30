@@ -1,5 +1,7 @@
 import numpy as np
 from PIL import Image
+import torch
+
 
 def nms(boxes, overlap_threshold=0.5, mode='union'):
     """ Pure Python NMS baseline. """
@@ -88,7 +90,7 @@ def get_image_boxes(bounding_boxes, img, size=24):
         img_box = img_box.resize((size, size), Image.BILINEAR)
         img_box = np.asarray(img_box, 'float32')
 
-        img_boxes[i, :, :, :] = _preprocess(img_box)
+        img_boxes[i, :, :, :] = preprocess(img_box)
 
     return img_boxes
 
@@ -126,10 +128,18 @@ def correct_bboxes(bboxes, width, height):
     return return_list
 
 
-def _preprocess(img):
+def preprocess(img):
     """Preprocessing step before feeding the network.
     """
     img = img.transpose((2, 0, 1))
     img = np.expand_dims(img, 0)
+    img = (img - 127.5)*0.0078125
+    return img
+
+def _preprocess(img):
+    """Preprocessing step before feeding the network.
+    """
+    img = img.permute(2, 0, 1)
+    img = img.unsqueeze(0)
     img = (img - 127.5)*0.0078125
     return img

@@ -1,6 +1,5 @@
 import math
 import numpy as np
-from PIL import Image
 import cv2
 import torch
 from .model import PNet, RNet, ONet
@@ -95,14 +94,8 @@ def run_first_stage(image, net, scale, threshold, device):
     """
         Run P-Net, generate bounding boxes, and do NMS.
     """
-    # width, height = image.size
-    height = image.shape[0]
-    width = image.shape[1]
-    # sw, sh = math.ceil(width*scale), math.ceil(height*scale)
-    # img = image.resize((int(sw), int(sh)), Image.BILINEAR)
     img = cv2.resize(image, (int(scale*image.shape[1]), int(scale*image.shape[0])) )
-    img = np.asarray(img, 'float32')
-    img = torch.FloatTensor(_preprocess(img))
+    img = _preprocess(torch.FloatTensor(img))
 
     output = net(img)
     probs = output[1].data.numpy()[0, 1, :, :]
@@ -115,14 +108,13 @@ def run_first_stage(image, net, scale, threshold, device):
     keep = nms(boxes[:, 0:5], overlap_threshold=0.5)
     return boxes[keep]
 
-
 def _generate_bboxes(probs, offsets, scale, threshold):
     """
        Generate bounding boxes at places where there is probably a face.
     """
     stride = 2
     cell_size = 12
-
+    print (probs.shape, offsets.shape, threshold)
     inds = np.where(probs > threshold)
 
     if inds[0].size == 0:
