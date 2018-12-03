@@ -95,11 +95,14 @@ def run_first_stage(image, net, scale, threshold, device):
         Run P-Net, generate bounding boxes, and do NMS.
     """
     img = cv2.resize(image, (int(scale*image.shape[1]), int(scale*image.shape[0])) )
+    print (scale, img.shape)
     img = _preprocess(torch.FloatTensor(img))
 
     output = net(img)
     probs = output[1].data.numpy()[0, 1, :, :]
     offsets = output[0].data.numpy()
+    print (output[0].shape, output[1].shape, probs.shape, offsets.shape)
+    # print("probs = {}\n".format(probs))
 
     boxes = _generate_bboxes(probs, offsets, scale, threshold)
     if len(boxes) == 0:
@@ -114,7 +117,7 @@ def _generate_bboxes(probs, offsets, scale, threshold):
     """
     stride = 2
     cell_size = 12
-    print (probs.shape, offsets.shape, threshold)
+    # print (probs.shape, offsets.shape, threshold)
     inds = np.where(probs > threshold)
 
     if inds[0].size == 0:
