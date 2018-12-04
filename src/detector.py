@@ -3,7 +3,7 @@ import numpy as np
 import cv2
 import torch
 from .model import PNet, RNet, ONet
-from .box_utils import nms, calibrate_box, get_image_boxes, convert_to_square, _preprocess
+from .box_utils import nms, calibrate_box, get_image_boxes, convert_to_square, _preprocess, _nms
 
 def detect_faces(image, min_face_size=20.0, thresholds=[0.6, 0.7, 0.8],
                  nms_thresholds=[0.7, 0.7, 0.7]):
@@ -32,15 +32,14 @@ def detect_faces(image, min_face_size=20.0, thresholds=[0.6, 0.7, 0.8],
     bounding_boxes = []
     for s in scales:    # run P-Net on different scales
         boxes = run_first_stage(image, pnet, scale=s, threshold=thresholds[0], device=device)
-        bounding_boxes.append(boxes)
-    bounding_boxes = [i for i in bounding_boxes if i is not None]
-    bounding_boxes = np.vstack(bounding_boxes)
+        if boxes.numel() != 0 and boxes is not None:
+            bounding_boxes = torch.cat([bounding_boxes, boxes], dim=0)
 
-    keep = nms(bounding_boxes[:, 0:5], nms_thresholds[0])
+    keep = _nms(bounding_boxes[:, 0:5], nms_thresholds[0])
     bounding_boxes = bounding_boxes[keep]
     bounding_boxes = calibrate_box(bounding_boxes[:, 0:5], bounding_boxes[:, 5:])
     bounding_boxes = convert_to_square(bounding_boxes)
-    bounding_boxes[:, 0:4] = np.round(bounding_boxes[:, 0:4])
+    bounding_boxes[:, 0:4] = torch.round(bounding_boxes[:, 0:4])
 
     # STAGE 2
     img_boxes = get_image_boxes(bounding_boxes, image, size=24)
@@ -99,17 +98,20 @@ def run_first_stage(image, net, scale, threshold, device):
     img = _preprocess(torch.FloatTensor(img))
 
     output = net(img)
-    probs = output[1].data.numpy()[0, 1, :, :]
-    offsets = output[0].data.numpy()
+    probs = output[1][0,1,:,:]
+    offsets = output[0]
+    # probs = output[1].data.numpy()[0, 1, :, :]
+    # offsets = output[0].data.numpy()
     print (output[0].shape, output[1].shape, probs.shape, offsets.shape)
     # print("probs = {}\n".format(probs))
 
     boxes = _generate_bboxes(probs, offsets, scale, threshold)
-    if len(boxes) == 0:
+    if boxes is None or boxes.numel() == 0:
         return None
 
-    keep = nms(boxes[:, 0:5], overlap_threshold=0.5)
-    return boxes[keep]
+    # boxes = boxes.data.numpy()
+    keep = _nms(boxes[:, 0:5], overlap_threshold=0.5)
+    return boxes[keep].data.numpy()
 
 def _generate_bboxes(probs, offsets, scale, threshold):
     """
@@ -117,24 +119,26 @@ def _generate_bboxes(probs, offsets, scale, threshold):
     """
     stride = 2
     cell_size = 12
-    # print (probs.shape, offsets.shape, threshold)
-    inds = np.where(probs > threshold)
 
-    if inds[0].size == 0:
-        return np.array([])
+    inds = torch.nonzero(probs > threshold)
 
-    tx1, ty1, tx2, ty2 = [offsets[0, i, inds[0], inds[1]] for i in range(4)]
+    if inds.numel() == 0:
+        return None
 
-    offsets = np.array([tx1, ty1, tx2, ty2])
-    score = probs[inds[0], inds[1]]
+    offsets = offsets[:, :, inds[:,0], inds[:,1]].squeeze(0)
+    score = probs[inds[:,0], inds[:,1]]
+    inds = inds.to(dtype=torch.float)
+    # print ("inds = {}/{}, offsets = {}/{}".format(inds.shape,inds.dtype,offsets.shape,offsets.dtype))
 
     # P-Net is applied to scaled images, so we need to rescale bounding boxes back
-    bounding_boxes = np.vstack([
-        np.round((stride*inds[1] + 1.0)/scale),
-        np.round((stride*inds[0] + 1.0)/scale),
-        np.round((stride*inds[1] + 1.0 + cell_size)/scale),
-        np.round((stride*inds[0] + 1.0 + cell_size)/scale),
-        score, offsets
+    bounding_boxes = torch.cat([
+        torch.round((stride*inds[:,1] + 1.0)/scale).unsqueeze(0),
+        torch.round((stride*inds[:,0] + 1.0)/scale).unsqueeze(0),
+        torch.round((stride*inds[:,1] + 1.0 + cell_size)/scale).unsqueeze(0),
+        torch.round((stride*inds[:,0] + 1.0 + cell_size)/scale).unsqueeze(0),
+        score.unsqueeze(0),
+        offsets
     ])
+    # print ("bb = {}".format(bounding_boxes.shape))
 
-    return bounding_boxes.T
+    return bounding_boxes.transpose(1,0)
