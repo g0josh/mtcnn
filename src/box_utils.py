@@ -90,8 +90,8 @@ def _nms(boxes, overlap_threshold=0.5, top_k=200):
         yy2 = torch.clamp(yy2, max=y2[i].data)
         # w.resize_as_(xx2)
         # h.resize_as_(yy2)
-        w = xx2 - xx1
-        h = yy2 - yy1
+        w = xx2 - xx1 +1
+        h = yy2 - yy1 +1
         # check sizes of xx1 and xx2.. after each iteration
         w = torch.clamp(w, min=0.0)
         h = torch.clamp(h, min=0.0)
@@ -108,11 +108,11 @@ def convert_to_square(bboxes):
     """
         Convert bounding boxes to a square form.
     """
-    square_bboxes = torch.zeros_like(bboxes)
+    square_bboxes = np.zeros_like(bboxes)
     x1, y1, x2, y2 = [bboxes[:, i] for i in range(4)]
     h = y2 - y1 + 1.0
     w = x2 - x1 + 1.0
-    max_side = torch.max(h, w)
+    max_side = np.maximum(h, w)
     square_bboxes[:, 0] = x1 + w*0.5 - max_side*0.5
     square_bboxes[:, 1] = y1 + h*0.5 - max_side*0.5
     square_bboxes[:, 2] = square_bboxes[:, 0] + max_side - 1.0
@@ -127,12 +127,13 @@ def calibrate_box(bboxes, offsets):
     x1, y1, x2, y2 = [bboxes[:, i] for i in range(4)]
     w = x2 - x1 + 1.0
     h = y2 - y1 + 1.0
-    w = w.unsqueeze(1)
-    h = h.unsqueeze(1)
+    w = np.expand_dims(w, 1)
+    h = np.expand_dims(h, 1)
 
-    translation = torch.cat([w, h, w, h], 1) * offsets
+    translation = np.hstack([w, h, w, h])*offsets
     bboxes[:, 0:4] = bboxes[:, 0:4] + translation
     return bboxes
+
 def _convert_to_square(bboxes):
     """
         Convert bounding boxes to a square form.
@@ -147,7 +148,6 @@ def _convert_to_square(bboxes):
     square_bboxes[:, 2] = square_bboxes[:, 0] + max_side - 1.0
     square_bboxes[:, 3] = square_bboxes[:, 1] + max_side - 1.0
     return square_bboxes
-
 
 def _calibrate_box(bboxes, offsets):
     """Transform bounding boxes to be more like true bounding boxes.
@@ -188,6 +188,19 @@ def get_image_boxes(bounding_boxes, img, size=24):
 
     return img_boxes
 
+def _get_image_boxes(bboxes, img, size=24):
+
+    bboxes_c = _correct_bboxes(bboxes, img)
+    num_bboxes = bboxes_c.shape[0]
+
+    cropped = []
+    for i in range(num_bboxes):
+        bbox = bboxes_c[i]
+        _cropped = img[:, : ,bbox[1]:bbox[3], bbox[0]:bbox[2]]
+        _cropped = torch.nn.functional.interpolate(_cropped, size=size, mode='bilinear')
+        cropped.append(_cropped)
+
+    return torch.cat(cropped)
 
 def correct_bboxes(bboxes, width, height):
     """Crop boxes that are too big and get coordinates
@@ -202,7 +215,7 @@ def correct_bboxes(bboxes, width, height):
     edx, edy = w.copy() - 1.0, h.copy() - 1.0
 
     ind = np.where(ex > width - 1.0)[0]
-    edx[ind] = w[ind] + width - 2.0 - ex[ind]
+    edx[ind] = w[ind]  + width - 2.0 - ex[ind]
     ex[ind] = width - 1.0
 
     ind = np.where(ey > height - 1.0)[0]
@@ -221,6 +234,27 @@ def correct_bboxes(bboxes, width, height):
 
     return return_list
 
+def _correct_bboxes(bboxes, img):
+    # all bbox dims to be within the image
+
+    imgh = img.shape[-2]
+    imgw = img.shape[-1]
+
+    x1 = bboxes[:,0]
+    x1_c = torch.clamp(x1, min = 0).unsqueeze(0)
+
+    y1 = bboxes[:,1]
+    y1_c = torch.clamp(y1, min = 0).unsqueeze(0)
+
+    x2 = bboxes[:,2]
+    x2_c = torch.clamp(x2, max = imgw-1).unsqueeze(0)
+
+    y2 = bboxes[:,3]
+    y2_c = torch.clamp(y2, max = imgh-1).unsqueeze(0)
+
+    bboxes_c = torch.cat([x1_c,y1_c,x2_c,y2_c]).transpose(1,0)
+
+    return bboxes_c.to(dtype=torch.int)
 
 def preprocess(img):
     """Preprocessing step before feeding the network.
