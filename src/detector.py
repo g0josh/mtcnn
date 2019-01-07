@@ -1,7 +1,8 @@
+from __future__ import print_function
 import torch
 import cv2
 from .model import PNet, RNet, ONet
-from .box_utils import nms, calibrate_box, get_image_boxes, convert_to_square, preprocess
+from .box_utils import calibrate_box, get_image_boxes, convert_to_square, preprocess, nms
 
 def detect_faces(image, min_face_size=20.0, thresholds=[0.6, 0.7, 0.8],
                  nms_thresholds=[0.7, 0.7, 0.7]):
@@ -28,7 +29,7 @@ def detect_faces(image, min_face_size=20.0, thresholds=[0.6, 0.7, 0.8],
 
     # convert cv2 image to torch
     image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    image = preprocess(torch.FloatTensor(image))
+    image = preprocess(torch.FloatTensor(image, device=device))
 
     # STAGE 1
     bounding_boxes = []
@@ -88,10 +89,9 @@ def detect_faces(image, min_face_size=20.0, thresholds=[0.6, 0.7, 0.8],
 
     bounding_boxes = calibrate_box(bounding_boxes, offsets)
     # keep = nms(bounding_boxes, nms_thresholds[2], mode='min')
-    keep = nms(bounding_boxes, nms_thresholds[2])
+    keep = nms(bounding_boxes, nms_thresholds[2], mode='min')
     bounding_boxes = bounding_boxes[keep]
     landmarks = landmarks[keep]
-
     return bounding_boxes, landmarks
 
 def run_first_stage(image, net, scale, threshold, device):
