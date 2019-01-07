@@ -11,6 +11,7 @@ def main():
     while cap.isOpened():
         isSuccess, image = cap.read()
         if isSuccess:
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
             bounding_boxes, landmarks = detect_faces(image)
             # print("bbox = {}\n{}\nland={}\n{}".format(type(bounding_boxes), bounding_boxes, type(landmarks), landmarks))
             if bounding_boxes.numel() > 0:
