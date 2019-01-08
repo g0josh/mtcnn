@@ -8,15 +8,22 @@ from utils.box_utils import nms as nms
 class FaceDetector(object):
     def __init__(self, min_face_size=20.0, thresholds=[0.6,0.7,0.8], nms_thresholds=[0.7,0.7,0.7], device=None):
 
-        if device in ['cpu','cuda']:
-            self.device = torch.device(device)
+        # Selece t the device
+        if device in ['gpu','cuda']:
+            if not torch.cuda.is_available():
+                print("cuda not available, using cpu instead")
+                self.device = torch.device('cpu')                
+            self.device = torch.device('cuda')
+        elif device in ['cpu', 'none']:
+            self.device = torch.device('cpu')
         else:
             self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         print ("Using {}...\n".format(self.device))
+        
         self.thresholds = thresholds
         self.nms_thresholds = nms_thresholds
         self.min_face_size = min_face_size
-
+        self.empty_float = torch.tensor([], dtype=torch.float, device=self.device)
         self.pnet = PNet().to(device=self.device).eval()
         self.rnet = RNet().to(device=self.device).eval()
         self.onet = ONet().to(device=self.device).eval()
@@ -53,6 +60,8 @@ class FaceDetector(object):
 
         bounding_boxes = torch.cat(bounding_boxes, dim=0)
         keep = nms(bounding_boxes[:, 0:5], self.nms_thresholds[0])
+        if keep.numel() == 0:
+            return self.empty_float, self.empty_float
         bounding_boxes = bounding_boxes[keep]
         bounding_boxes = calibrate_box(bounding_boxes[:, 0:5], bounding_boxes[:, 5:])
         bounding_boxes = convert_to_square(bounding_boxes)
@@ -60,16 +69,22 @@ class FaceDetector(object):
 
         # STAGE 2
         img_boxes = get_image_boxes(bounding_boxes, image, size=24)
+        if img_boxes.numel() == 0:
+            return self.empty_float, self.empty_float
         output = self.rnet(img_boxes)
         offsets = output[0]  # shape [n_boxes, 4]
         probs = output[1] # shape [n_boxes, 2]
 
         keep = torch.nonzero(probs[:, -1] > self.thresholds[1]).view(-1)
+        if keep.numel() == 0:
+            return self.empty_float, self.empty_float
         bounding_boxes = bounding_boxes[keep]
         bounding_boxes[:, 4] = probs[keep, 1]
         offsets = offsets[keep]
 
         keep = nms(bounding_boxes, self.nms_thresholds[1])
+        if keep.numel() == 0:
+            return self.empty_float, self.empty_float
         bounding_boxes = bounding_boxes[keep]
         bounding_boxes = calibrate_box(bounding_boxes, offsets[keep])
         bounding_boxes = convert_to_square(bounding_boxes)
@@ -78,13 +93,15 @@ class FaceDetector(object):
         # STAGE 3
         img_boxes = get_image_boxes(bounding_boxes, image, size=48)
         if img_boxes.numel() == 0:
-            return [], []
+            return self.empty_float, self.empty_float
         output = self.onet(img_boxes)
         landmarks = output[0]  # shape [n_boxes, 10]
         offsets = output[1]  # shape [n_boxes, 4]
         probs = output[2]  # shape [n_boxes, 2]
 
         keep = torch.nonzero(probs[:, 1] > self.thresholds[2]).view(-1)
+        if keep.numel() == 0:
+            return self.empty_float, self.empty_float
         bounding_boxes = bounding_boxes[keep]
         bounding_boxes[:, 4] = probs[keep, 1]
         offsets = offsets[keep]
@@ -100,6 +117,8 @@ class FaceDetector(object):
         bounding_boxes = calibrate_box(bounding_boxes, offsets)
         # keep = nms(bounding_boxes, nms_thresholds[2], mode='min')
         keep = nms(bounding_boxes, self.nms_thresholds[2], mode='min')
+        if keep.numel() == 0:
+            return self.empty_float, self.empty_float
         bounding_boxes = bounding_boxes[keep]
         landmarks = landmarks[keep]
         return bounding_boxes, landmarks
