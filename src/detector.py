@@ -2,18 +2,24 @@ from __future__ import print_function
 import torch
 import cv2
 from .model import PNet, RNet, ONet
-from .box_utils import calibrate_box, get_image_boxes, convert_to_square, preprocess, nms
+from utils.box_utils import calibrate_box, get_image_boxes, convert_to_square, preprocess
+from utils.box_utils import nms as nms
 
 class FaceDetector(object):
-    def __init__(self, min_face_size=20.0, thresholds=[0.6,0.7,0.8], nms_thresholds=[0.7,0.7,0.7]):
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    def __init__(self, min_face_size=20.0, thresholds=[0.6,0.7,0.8], nms_thresholds=[0.7,0.7,0.7], device=None):
+
+        if device in ['cpu','cuda']:
+            self.device = torch.device(device)
+        else:
+            self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        print ("Using {}...\n".format(self.device))
         self.thresholds = thresholds
         self.nms_thresholds = nms_thresholds
         self.min_face_size = min_face_size
 
-        self.pnet = PNet().to(self.device)
-        self.rnet = RNet().to(self.device)
-        self.onet = ONet().to(self.device).eval()
+        self.pnet = PNet().to(device=self.device).eval()
+        self.rnet = RNet().to(device=self.device).eval()
+        self.onet = ONet().to(device=self.device).eval()
 
     def detect(self, image):
         height = image.shape[0]
@@ -33,7 +39,8 @@ class FaceDetector(object):
             factor_count += 1
 
         # convert cv2 image to torch
-        image = preprocess(torch.FloatTensor(image, device=self.device))
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        image = preprocess(torch.tensor(image, dtype=torch.float, device=self.device))
 
         # STAGE 1
         bounding_boxes = []
@@ -72,7 +79,7 @@ class FaceDetector(object):
         img_boxes = get_image_boxes(bounding_boxes, image, size=48)
         if img_boxes.numel() == 0:
             return [], []
-        output = onet(img_boxes)
+        output = self.onet(img_boxes)
         landmarks = output[0]  # shape [n_boxes, 10]
         offsets = output[1]  # shape [n_boxes, 4]
         probs = output[2]  # shape [n_boxes, 2]
@@ -102,7 +109,6 @@ class FaceDetector(object):
         Run P-Net, generate bounding boxes, and do NMS.
         """
         img = torch.nn.functional.interpolate(image, scale_factor=scale, mode='bilinear')
-
         output = net(img)
         probs = output[1][0,1,:,:]
         offsets = output[0]
