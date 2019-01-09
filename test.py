@@ -2,7 +2,7 @@ from __future__ import print_function
 from __future__ import division
 
 from src.detector import FaceDetector
-from utils.viz_utils import show_bboxes, write_text
+from utils.viz_utils import draw_boxes, write_text
 import cv2
 import time
 
@@ -12,24 +12,26 @@ def main():
     fr_cnt = 0
     st_time = time.time()
     interval = 5
+    info = 'calculating...'
     while cap.isOpened():
         isSuccess, image = cap.read()
         if isSuccess:
             fr_cnt += 1
             bounding_boxes,landmarks = face_detector.detect(image)
             if bounding_boxes is not None and bounding_boxes.numel() > 0:
-                image = show_bboxes(image, bounding_boxes, landmarks)
-        
+                image = draw_boxes(image, bounding_boxes, landmarks)
+
         if time.time() - st_time >= interval:
-            text = str(fr_cnt/interval) + "  " + str(image.size)
-            image = write_text(image, text)
-            print ("fps = {}".format(fr_cnt/interval))
+            info = str(fr_cnt/interval) + "FPS | " + str(image.shape)
+            # print (info)
             fr_cnt = 0
             st_time = time.time()
 
+        image = write_text(image, info)
         cv2.imshow('face', image)
         if cv2.waitKey(1)&0xFF == ord('q'):
             break
+    cap.release()
 
 if __name__ == "__main__":
     main()
