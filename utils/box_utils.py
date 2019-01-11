@@ -108,14 +108,13 @@ def get_image_boxes(bboxes, img, size=24):
     bboxes_c = correct_bboxes(bboxes, img)
     num_bboxes = bboxes_c.shape[0]
 
-    cropped = []
+    cropped = torch.zeros((num_bboxes, 3, size, size), dtype=img.dtype, device=img.device)
     for i in range(num_bboxes):
         bbox = bboxes_c[i]
         _cropped = img[:, : ,bbox[1]:bbox[3], bbox[0]:bbox[2]]
-        _cropped = torch.nn.functional.interpolate(_cropped, size=size, mode='bilinear')
-        cropped.append(_cropped)
+        cropped[i,:,:,:] = torch.nn.functional.interpolate(_cropped, size=size, mode='bilinear')
 
-    return torch.cat(cropped)
+    return cropped
 
 def correct_bboxes(bboxes, img):
     # all bbox dims to be within the image
@@ -123,25 +122,17 @@ def correct_bboxes(bboxes, img):
     imgh = img.shape[-2]
     imgw = img.shape[-1]
 
-    x1 = bboxes[:,0]
-    x1_c = torch.clamp(x1, min = 0).unsqueeze(0)
+    # bboxes_c = torch.zeros_like(bboxes, dtype = torch.int)
+    bboxes[:,:2] = bboxes[:,:2].clamp(min=0)
+    bboxes[:,2] = bboxes[:,2].clamp(max=imgw-1)
+    bboxes[:,3] = bboxes[:,3].clamp(max=imgh-1)
+    return bboxes.to(torch.int)
 
-    y1 = bboxes[:,1]
-    y1_c = torch.clamp(y1, min = 0).unsqueeze(0)
-
-    x2 = bboxes[:,2]
-    x2_c = torch.clamp(x2, max = imgw-1).unsqueeze(0)
-
-    y2 = bboxes[:,3]
-    y2_c = torch.clamp(y2, max = imgh-1).unsqueeze(0)
-
-    bboxes_c = torch.cat([x1_c,y1_c,x2_c,y2_c]).transpose(1,0)
-
-    return bboxes_c.to(dtype=torch.int)
-
-def preprocess(img):
+def cv2Torch(image, device):
     """Preprocessing step before feeding the network.
     """
+    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    img = torch.tensor(image, dtype=torch.float, device=device)
     img = img.permute(2, 0, 1)
     img = img.unsqueeze(0)
     img = (img - 127.5)*0.0078125

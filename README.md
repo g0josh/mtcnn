@@ -1,21 +1,18 @@
-# mtcnn-pytorch
+# MTCNN
 pytorch implementation of  face detection algorithm  MTCNN
 
 ### Usage MTCNN
 
-Just download the repository and then do this
+Just clone this repository and then do,
 
 ```
-image = Image.open('images/test3.jpg')
-bounding_boxes, landmarks = detect_faces(image)
-image = show_bboxes(image, bounding_boxes, landmarks)
-image.show()
+python test.py
 ```
 
 ### Requirements
 
 - pytorch 0.4.1
-- Pillow, numpy
+- cv2
 
 ### Credit
 
