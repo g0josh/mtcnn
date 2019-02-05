@@ -1,9 +1,7 @@
 import torch
+import numpy as np
 
-def _nms(boxes, overlap_threshold=0.5, mode='union'):
-    import numpy as np
-    boxes = boxes.data.numpy()
-    """ Pure Python NMS baseline. """
+def nms(boxes, overlap_threshold=0.5, min_mode=False):
     x1 = boxes[:, 0]
     y1 = boxes[:, 1]
     x2 = boxes[:, 2]
@@ -15,29 +13,28 @@ def _nms(boxes, overlap_threshold=0.5, mode='union'):
 
     keep = []
     while order.size > 0:
-        i = order[0]
-        keep.append(i)
-        xx1 = np.maximum(x1[i], x1[order[1:]])
-        yy1 = np.maximum(y1[i], y1[order[1:]])
-        xx2 = np.minimum(x2[i], x2[order[1:]])
-        yy2 = np.minimum(y2[i], y2[order[1:]])
+        keep.append(order[0])
+        xx1 = np.maximum(x1[order[0]], x1[order[1:]])
+        yy1 = np.maximum(y1[order[0]], y1[order[1:]])
+        xx2 = np.minimum(x2[order[0]], x2[order[1:]])
+        yy2 = np.minimum(y2[order[0]], y2[order[1:]])
 
         w = np.maximum(0.0, xx2 - xx1 + 1)
         h = np.maximum(0.0, yy2 - yy1 + 1)
         inter = w * h
 
-        if mode is 'min':
-            ovr = inter / np.minimum(areas[i], areas[order[1:]])
+        if min_mode:
+            ovr = inter / np.minimum(areas[order[0]], areas[order[1:]])
         else:
-            ovr = inter / (areas[i] + areas[order[1:]] - inter)
+            ovr = inter / (areas[order[0]] + areas[order[1:]] - inter)
 
         inds = np.where(ovr <= overlap_threshold)[0]
         order = order[inds + 1]
-
     return keep
 
-
-def nms(boxes, overlap_threshold=0.5, mode='union'):
+def _nms(boxes, overlap_threshold=0.5, mode='union'):
+    # This native torch implementation is slow
+    # on cuda for cuda tensors
     x1 = boxes[:, 0]
     y1 = boxes[:, 1]
     x2 = boxes[:, 2]

@@ -8,17 +8,20 @@ import time
 import torch
 
 def main():
-    face_detector = FaceDetector(device='cpu')
+    face_detector = FaceDetector(device='cuda')
     cap = cv2.VideoCapture(-1)
     fr_cnt = 0
     st_time = time.time()
     interval = 5
     info = 'calculating...'
-    # faces = torch.zeros((112,112))
-    while cap.isOpened():
+    faces = torch.zeros((112,112))
+    cnt = 0
+    totime = time.time()
+    while cap.isOpened() and time.time()-totime < 60:
         isSuccess, image = cap.read()
         if isSuccess:
             fr_cnt += 1
+            cnt += 1
             bounding_boxes,landmarks = face_detector.detect(image)
             if bounding_boxes is not None and bounding_boxes.numel() > 0:
                 image, faces = drawBoxesGetFaces(image, bounding_boxes, landmarks)

@@ -3,7 +3,12 @@ import torch
 import cv2
 from model import PNet, RNet, ONet
 from utils.box_utils import calibrate_box, get_image_boxes, convert_to_square
-from utils.box_utils import nms as nms
+from utils.box_utils import nms as nms_cpu
+
+
+def nms(bboxes, threshold, min_mode=False):
+    return nms_cpu(bboxes.cpu().numpy(), threshold, min_mode)
+    # return torch.from_numpy(keep_np).to(torch.long)
 
 class FaceDetector(object):
 
@@ -56,108 +61,107 @@ class FaceDetector(object):
         # convert cv2 image to torch
         image = self.cv2Image2Torch(image, self.device)
         # STAGE 1
-        # with torch.no_grad():
-        bounding_boxes = []
-        for scale in scales:    # run P-Net on different scales
-            img = torch.nn.functional.interpolate(image, scale_factor=scale, mode='bilinear')
-            output = self.pnet(img)
-            probs = output[1][0,1,:,:]
-            offsets = output[0]
+        with torch.no_grad():
+            bounding_boxes = []
+            for scale in scales:    # run P-Net on different scales
+                img = torch.nn.functional.interpolate(image, scale_factor=scale, mode='bilinear')
+                output = self.pnet(img)
+                probs = output[1][0,1,:,:]
+                offsets = output[0]
 
-            # Generate bounding boxes at places where there is probably a face.
-            stride = 2
-            cell_size = 12
+                # Generate bounding boxes at places where there is probably a face.
+                stride = 2
+                cell_size = 12
 
-            inds = torch.nonzero(probs > self.thresholds[0])
+                inds = torch.nonzero(probs > self.thresholds[0])
 
-            if inds.numel() == 0:
-                continue
+                if inds.numel() == 0:
+                    continue
 
-            offsets = offsets[:, :, inds[:,0], inds[:,1]].squeeze(0)
-            score = probs[inds[:,0], inds[:,1]]
-            inds = inds.to(dtype=torch.float)
+                offsets = offsets[:, :, inds[:,0], inds[:,1]].squeeze(0)
+                score = probs[inds[:,0], inds[:,1]]
+                inds = inds.to(dtype=torch.float)
 
-            # P-Net is applied to scaled images, so we need to rescale bounding boxes back
-            boxes = torch.cat([
-                torch.round((stride*inds[:,1] + 1.0)/scale).unsqueeze(0),
-                torch.round((stride*inds[:,0] + 1.0)/scale).unsqueeze(0),
-                torch.round((stride*inds[:,1] + 1.0 + cell_size)/scale).unsqueeze(0),
-                torch.round((stride*inds[:,0] + 1.0 + cell_size)/scale).unsqueeze(0),
-                score.unsqueeze(0),
-                offsets
-            ])
+                # P-Net is applied to scaled images, so we need to rescale bounding boxes back
+                boxes = torch.cat([
+                    torch.round((stride*inds[:,1] + 1.0)/scale).unsqueeze(0),
+                    torch.round((stride*inds[:,0] + 1.0)/scale).unsqueeze(0),
+                    torch.round((stride*inds[:,1] + 1.0 + cell_size)/scale).unsqueeze(0),
+                    torch.round((stride*inds[:,0] + 1.0 + cell_size)/scale).unsqueeze(0),
+                    score.unsqueeze(0),
+                    offsets
+                ])
 
-            boxes = boxes.transpose(1,0)
+                boxes = boxes.transpose(1,0)
 
-            if boxes is None or boxes.numel() == 0:
-                continue
+                if boxes is None or boxes.numel() == 0:
+                    continue
 
-            keep = nms(boxes[:, 0:5], overlap_threshold=0.5)
-            bounding_boxes.append(boxes[keep])
+                keep = nms(boxes[:, 0:5], 0.5)
+                bounding_boxes.append(boxes[keep])
+            if not bounding_boxes:
+                return self.empty_float,self.empty_float
 
-        if not bounding_boxes:
-            return torch.empty(0), torch.empty(0)
+            bounding_boxes = torch.cat(bounding_boxes, dim=0)
+            keep = nms(bounding_boxes[:, 0:5], self.nms_thresholds[0])
+            if len(keep) == 0:
+                return self.empty_float,self.empty_float
+            bounding_boxes = bounding_boxes[keep]
+            bounding_boxes = calibrate_box(bounding_boxes[:, 0:5], bounding_boxes[:, 5:])
+            bounding_boxes = convert_to_square(bounding_boxes)
+            bounding_boxes[:, 0:4] = torch.round(bounding_boxes[:, 0:4])
 
-        bounding_boxes = torch.cat(bounding_boxes, dim=0)
-        keep = nms(bounding_boxes[:, 0:5], self.nms_thresholds[0])
-        if keep.numel() == 0:
-            return self.empty_float,self.empty_float
-        bounding_boxes = bounding_boxes[keep]
-        bounding_boxes = calibrate_box(bounding_boxes[:, 0:5], bounding_boxes[:, 5:])
-        bounding_boxes = convert_to_square(bounding_boxes)
-        bounding_boxes[:, 0:4] = torch.round(bounding_boxes[:, 0:4])
+            # STAGE 2
+            img_boxes = get_image_boxes(bounding_boxes, image, size=24)
+            if img_boxes.numel() == 0:
+                return self.empty_float,self.empty_float
+            output = self.rnet(img_boxes)
+            offsets = output[0]  # shape [n_boxes, 4]
+            probs = output[1] # shape [n_boxes, 2]
 
-        # STAGE 2
-        img_boxes = get_image_boxes(bounding_boxes, image, size=24)
-        if img_boxes.numel() == 0:
-            return self.empty_float,self.empty_float
-        output = self.rnet(img_boxes)
-        offsets = output[0]  # shape [n_boxes, 4]
-        probs = output[1] # shape [n_boxes, 2]
+            keep = torch.nonzero(probs[:, -1] > self.thresholds[1]).view(-1)
+            if len(keep) == 0:
+                return self.empty_float,self.empty_float
+            bounding_boxes = bounding_boxes[keep]
+            bounding_boxes[:, 4] = probs[keep, 1]
+            offsets = offsets[keep]
 
-        keep = torch.nonzero(probs[:, -1] > self.thresholds[1]).view(-1)
-        if keep.numel() == 0:
-            return self.empty_float,self.empty_float
-        bounding_boxes = bounding_boxes[keep]
-        bounding_boxes[:, 4] = probs[keep, 1]
-        offsets = offsets[keep]
+            keep = nms(bounding_boxes, self.nms_thresholds[1])
+            if len(keep) == 0:
+                return self.empty_float,self.empty_float
+            bounding_boxes = bounding_boxes[keep]
+            bounding_boxes = calibrate_box(bounding_boxes, offsets[keep])
+            bounding_boxes = convert_to_square(bounding_boxes)
+            bounding_boxes[:, 0:4] = torch.round(bounding_boxes[:, 0:4])
 
-        keep = nms(bounding_boxes, self.nms_thresholds[1])
-        if keep.numel() == 0:
-            return self.empty_float,self.empty_float
-        bounding_boxes = bounding_boxes[keep]
-        bounding_boxes = calibrate_box(bounding_boxes, offsets[keep])
-        bounding_boxes = convert_to_square(bounding_boxes)
-        bounding_boxes[:, 0:4] = torch.round(bounding_boxes[:, 0:4])
+            # STAGE 3
+            img_boxes = get_image_boxes(bounding_boxes, image, size=48)
+            if img_boxes.numel() == 0:
+                return self.empty_float,self.empty_float
+            output = self.onet(img_boxes)
+            landmarks = output[0]  # shape [n_boxes, 10]
+            offsets = output[1]  # shape [n_boxes, 4]
+            probs = output[2]  # shape [n_boxes, 2]
 
-        # STAGE 3
-        img_boxes = get_image_boxes(bounding_boxes, image, size=48)
-        if img_boxes.numel() == 0:
-            return self.empty_float,self.empty_float
-        output = self.onet(img_boxes)
-        landmarks = output[0]  # shape [n_boxes, 10]
-        offsets = output[1]  # shape [n_boxes, 4]
-        probs = output[2]  # shape [n_boxes, 2]
+            keep = torch.nonzero(probs[:, 1] > self.thresholds[2]).view(-1)
+            if len(keep) == 0:
+                return self.empty_float,self.empty_float
+            bounding_boxes = bounding_boxes[keep]
+            bounding_boxes[:, 4] = probs[keep, 1]
+            offsets = offsets[keep]
+            landmarks = landmarks[keep]
 
-        keep = torch.nonzero(probs[:, 1] > self.thresholds[2]).view(-1)
-        if keep.numel() == 0:
-            return self.empty_float,self.empty_float
-        bounding_boxes = bounding_boxes[keep]
-        bounding_boxes[:, 4] = probs[keep, 1]
-        offsets = offsets[keep]
-        landmarks = landmarks[keep]
+            # compute landmark points
+            width = bounding_boxes[:, 2] - bounding_boxes[:, 0] + 1.0
+            height = bounding_boxes[:, 3] - bounding_boxes[:, 1] + 1.0
+            xmin, ymin = bounding_boxes[:, 0], bounding_boxes[:, 1]
+            landmarks[:, 0:5] = xmin.unsqueeze(1) + width.unsqueeze(1) * landmarks[:, 0:5]
+            landmarks[:, 5:10] = ymin.unsqueeze(1) + height.unsqueeze(1) * landmarks[:, 5:10]
 
-        # compute landmark points
-        width = bounding_boxes[:, 2] - bounding_boxes[:, 0] + 1.0
-        height = bounding_boxes[:, 3] - bounding_boxes[:, 1] + 1.0
-        xmin, ymin = bounding_boxes[:, 0], bounding_boxes[:, 1]
-        landmarks[:, 0:5] = xmin.unsqueeze(1) + width.unsqueeze(1) * landmarks[:, 0:5]
-        landmarks[:, 5:10] = ymin.unsqueeze(1) + height.unsqueeze(1) * landmarks[:, 5:10]
-
-        bounding_boxes = calibrate_box(bounding_boxes, offsets)
-        keep = nms(bounding_boxes, self.nms_thresholds[2], mode='min')
-        if keep.numel() == 0:
-            return self.empty_float,self.empty_float
-        bounding_boxes = bounding_boxes[keep]
-        landmarks = landmarks[keep]
-        return bounding_boxes, landmarks
+            bounding_boxes = calibrate_box(bounding_boxes, offsets)
+            keep = nms(bounding_boxes, self.nms_thresholds[2], min_mode=True)
+            if len(keep) == 0:
+                return self.empty_float,self.empty_float
+            bounding_boxes = bounding_boxes[keep]
+            landmarks = landmarks[keep]
+            return bounding_boxes, landmarks
